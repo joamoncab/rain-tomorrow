@@ -1,0 +1,82 @@
+name: Rain
+
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clone Rain repository
+        run: git clone https://codeberg.org/raincord/rain.git
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: rain
+        run: npm ci
+
+      - name: Build (minified + bytecode)
+        working-directory: rain
+        run: |
+          node scripts/build.mjs \
+            --build-minify \
+            --build-bytecode
+
+      - name: Read new build hash
+        id: newhash
+        run: |
+          HASH=$(jq -r .hash rain/dist/info.json)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+
+      - name: Get previous release hash
+        id: oldhash
+        run: |
+          LAST_HASH=$(gh release view latest --json body -q .body 2>/dev/null | grep "hash:" | awk '{print $2}' || echo "")
+          echo "hash=$LAST_HASH" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compare hashes
+        id: compare
+        run: |
+          if [ "${{ steps.newhash.outputs.hash }}" = "${{ steps.oldhash.outputs.hash }}" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create release (only if changed)
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          TAG="build-${{ steps.newhash.outputs.hash }}"
+
+          gh release create $TAG \
+            rain/dist/*.hbc \
+            rain/dist/*.min.js \
+            rain/dist/info.json \
+            --title "Rain build $TAG" \
+            --notes "hash: ${{ steps.newhash.outputs.hash }}"
+
+          # Update "latest" release
+          gh release delete latest -y 2>/dev/null || true
+          gh release create latest \
+            rain/dist/*.hbc \
+            rain/dist/*.min.js \
+            rain/dist/info.json \
+            --title "Latest build" \
+            --notes "hash: ${{ steps.newhash.outputs.hash }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
