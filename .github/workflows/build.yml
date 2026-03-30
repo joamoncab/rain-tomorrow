@@ -63,6 +63,14 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Delete previous release with same tag (if exists)
+        run: |
+          TAG="build-${{ steps.newhash.outputs.hash }}"
+          gh release delete "$TAG" -y 2>/dev/null || true
+          git push origin --delete "$TAG" 2>/dev/null || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create release (only if changed)
         if: steps.compare.outputs.changed == 'true'
         run: |
